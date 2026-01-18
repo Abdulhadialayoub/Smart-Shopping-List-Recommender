@@ -1,0 +1,277 @@
+{
+  "name": "Akilli Alisveris Asistani",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1
+            }
+          ]
+        }
+      },
+      "name": "G�nl�k Kontrol",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot/getUpdates",
+        "options": {}
+      },
+      "name": "Telegram Updates Al",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Telegram updates'ten chat ID'leri �ikar\nconst updates = items[0].json.result;\nconst chatIds = [];\n\nif (updates && updates.length > 0) {\n  // Son 10 mesajdan unique chat ID'leri al\n  const uniqueChats = new Set();\n  \n  updates.slice(-10).forEach(update => {\n    if (update.message && update.message.chat) {\n      const chatId = update.message.chat.id;\n      const firstName = update.message.chat.first_name || 'Kullanici';\n      \n      if (!uniqueChats.has(chatId)) {\n        uniqueChats.add(chatId);\n        chatIds.push({\n          chatId: chatId,\n          firstName: firstName,\n          userId: `telegram-${chatId}` // Telegram chat ID'sini user ID olarak kullan\n        });\n      }\n    }\n  });\n}\n\n// Eger hi� chat yoksa demo kullanici ekle\nif (chatIds.length === 0) {\n  chatIds.push({\n    chatId: 'DEMO_CHAT_ID',\n    firstName: 'Demo Kullanici',\n    userId: 'demo-user-123'\n  });\n}\n\nreturn chatIds.map(chat => ({\n  json: {\n    userId: chat.userId,\n    chatId: chat.chatId,\n    firstName: chat.firstName\n  }\n}));"
+      },
+      "name": "Chat ID'leri �ikar",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://nginx-proxy/api/user/n8n/active-users",
+        "options": {}
+      },
+      "name": "Aktif Kullanicilari Al",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://nginx-proxy/api/fridge/{{$json.userId}}",
+        "options": {}
+      },
+      "name": "Buzdolabi Durumu",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Buzdolabi analizi\nconst fridgeItems = items[0].json;\nconst today = new Date();\n\n// Son kullanma tarihi yaklasan �r�nler (3 g�n i�inde)\nconst expiringItems = fridgeItems.filter(item => {\n  const expiryDate = new Date(item.expiryDate);\n  const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));\n  return daysUntilExpiry <= 3 && daysUntilExpiry >= 0;\n});\n\n// S�resi ge�mis �r�nler\nconst expiredItems = fridgeItems.filter(item => {\n  const expiryDate = new Date(item.expiryDate);\n  return expiryDate < today;\n});\n\n// Kategori analizi\nconst categoryCount = {};\nfridgeItems.forEach(item => {\n  categoryCount[item.category] = (categoryCount[item.category] || 0) + 1;\n});\n\n// Eksik temel �r�nler\nconst basicItems = ['Ekmek', 'S�t', 'Yumurta', 'Domates', 'Sogan', 'Patates'];\nconst availableBasicItems = fridgeItems.map(item => item.name.toLowerCase());\nconst missingBasicItems = basicItems.filter(basic => \n  !availableBasicItems.some(available => \n    available.includes(basic.toLowerCase()) || basic.toLowerCase().includes(available)\n  )\n);\n\nreturn [{\n  json: {\n    totalItems: fridgeItems.length,\n    expiringItems,\n    expiredItems,\n    categoryCount,\n    missingBasicItems,\n    needsAttention: expiringItems.length > 0 || expiredItems.length > 0 || missingBasicItems.length > 3,\n    analysis: {\n      expiringCount: expiringItems.length,\n      expiredCount: expiredItems.length,\n      missingBasicCount: missingBasicItems.length,\n      diversityScore: Object.keys(categoryCount).length\n    }\n  }\n}];"
+      },
+      "name": "Buzdolabi Analizi",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.needsAttention}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "name": "Dikkat Gerekiyor mu?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://nginx-proxy/api/shopping/n8n/smart-shopping-list",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ { \"userId\": $('Aktif Kullanicilari Al').item.json.userId, \"maxItems\": 8, \"includeExpiringItems\": true, \"includeBasicItems\": true } }}"
+      },
+      "name": "Akilli Liste Olustur",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Alisveris listesi ve AI tavsiyesi formatla\nconst fridgeAnalysis = items[0].json;\nconst shoppingData = items[1].json;\n\nconst message = `?? **G�nl�k Alisveris Raporu**\n\n?? **Buzdolabi Durumu:**\n� Toplam �r�n: ${fridgeAnalysis.totalItems}\n� Yakinda bitecek: ${fridgeAnalysis.analysis.expiringCount} �r�n\n� S�resi ge�mis: ${fridgeAnalysis.analysis.expiredCount} �r�n\n� Eksik temel �r�n: ${fridgeAnalysis.analysis.missingBasicCount}\n\n??? **�nerilen Alisveris Listesi:**\n${shoppingData.shoppingList.map(item => \n  `� ${item.item} - ${item.recommendedStore} (${item.bestPrice} TL) - ${item.reason}`\n).join('\\n')}\n\n?? **AI Tavsiyesi:**\n${shoppingData.aiAdvice}\n\n?? **�zet:**\n� Toplam tahmini tutar: ${shoppingData.summary.estimatedTotal.toFixed(2)} TL\n� �nerilen marketler: ${shoppingData.summary.recommendedStores.join(', ')}\n� Olusturulma: ${new Date().toLocaleString('tr-TR')}`;\n\nreturn [{\n  json: {\n    message,\n    shoppingData,\n    fridgeAnalysis,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "name": "Rapor Formatla",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "method": "POST",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ { \"chat_id\": $json.chatId, \"text\": $json.message, \"parse_mode\": \"Markdown\" } }}"
+      },
+      "name": "Telegram Bildirimi",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "G�nl�k Kontrol": {
+      "main": [
+        [
+          {
+            "node": "Telegram Updates Al",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aktif Kullanicilari Al",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Updates Al": {
+      "main": [
+        [
+          {
+            "node": "Chat ID'leri �ikar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat ID'leri �ikar": {
+      "main": [
+        [
+          {
+            "node": "Buzdolabi Durumu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktif Kullanicilari Al": {
+      "main": [
+        [
+          {
+            "node": "Buzdolabi Durumu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buzdolabi Durumu": {
+      "main": [
+        [
+          {
+            "node": "Buzdolabi Analizi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buzdolabi Analizi": {
+      "main": [
+        [
+          {
+            "node": "Dikkat Gerekiyor mu?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dikkat Gerekiyor mu?": {
+      "main": [
+        [
+          {
+            "node": "Akilli Liste Olustur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Akilli Liste Olustur": {
+      "main": [
+        [
+          {
+            "node": "Rapor Formatla",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rapor Formatla": {
+      "main": [
+        [
+          {
+            "node": "Telegram Bildirimi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "id": "smart-shopping-assistant"
+}

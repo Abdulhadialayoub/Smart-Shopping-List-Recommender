@@ -1,0 +1,198 @@
+{
+  "name": "Tarif Seçimi ve Fiyat Kontrolü",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipe-selected",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Tarif Seçildi",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://7c396f7fa793.ngrok-free.app/api/fridge/{{ $json.body.userId }}",
+        "options": {}
+      },
+      "id": "get-fridge",
+      "name": "Buzdolabını Getir",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tarif malzemeleri ve buzdolabı karşılaştırması\nconst recipe = $('Tarif Seçildi').item.json.body.recipe;\nconst fridgeItems = $('Buzdolabını Getir').item.json;\n\n// Buzdolabındaki ürün isimlerini küçük harfe çevir\nconst fridgeNames = fridgeItems.map(item => item.name.toLowerCase());\n\n// Eksik malzemeleri bul\nconst missingIngredients = recipe.ingredients.filter(ingredient => {\n  const ingredientLower = ingredient.toLowerCase();\n  return !fridgeNames.some(name => \n    ingredientLower.includes(name) || name.includes(ingredientLower)\n  );\n});\n\nreturn [{\n  json: {\n    recipeName: recipe.name,\n    totalIngredients: recipe.ingredients.length,\n    missingIngredients: missingIngredients,\n    missingCount: missingIngredients.length,\n    hasMissing: missingIngredients.length > 0\n  }\n}];"
+      },
+      "id": "find-missing",
+      "name": "Eksik Malzemeleri Bul",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $json.hasMissing }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-missing",
+      "name": "Eksik Var mı?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://7c396f7fa793.ngrok-free.app/api/cimri/batch-search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ products: $json.missingIngredients }) }}",
+        "options": {}
+      },
+      "id": "get-prices",
+      "name": "Fiyatları Getir",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fiyat sonuçlarını formatla\nconst priceResults = $input.item.json;\nconst missingInfo = $('Eksik Malzemeleri Bul').item.json;\n\nlet totalMinPrice = 0;\nlet totalMaxPrice = 0;\nconst formattedResults = [];\n\nfor (const [product, data] of Object.entries(priceResults)) {\n  if (data.success && data.products && data.products.length > 0) {\n    const prices = data.products.map(p => p.price).filter(p => p > 0);\n    const minPrice = Math.min(...prices);\n    const maxPrice = Math.max(...prices);\n    totalMinPrice += minPrice;\n    totalMaxPrice += maxPrice;\n    \n    formattedResults.push({\n      product: product,\n      minPrice: minPrice,\n      maxPrice: maxPrice,\n      store: data.products[0].store,\n      optionCount: data.products.length\n    });\n  } else {\n    formattedResults.push({\n      product: product,\n      minPrice: 0,\n      maxPrice: 0,\n      store: 'Bulunamadı',\n      optionCount: 0\n    });\n  }\n}\n\nreturn [{\n  json: {\n    recipeName: missingInfo.recipeName,\n    missingCount: missingInfo.missingCount,\n    products: formattedResults,\n    estimatedMinCost: totalMinPrice,\n    estimatedMaxCost: totalMaxPrice,\n    message: `${missingInfo.recipeName} için ${missingInfo.missingCount} eksik malzeme bulundu. Tahmini maliyet: ${totalMinPrice.toFixed(2)} - ${totalMaxPrice.toFixed(2)} TL`\n  }\n}];"
+      },
+      "id": "format-prices",
+      "name": "Fiyatları Formatla",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-prices",
+      "name": "Fiyatları Döndür",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1570, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"recipeName\": \"{{ $json.recipeName }}\",\n  \"message\": \"Tüm malzemeler buzdolabında mevcut!\",\n  \"missingCount\": 0,\n  \"estimatedCost\": 0\n}",
+        "options": {}
+      },
+      "id": "respond-complete",
+      "name": "Tamamlandı Döndür",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1130, 400]
+    }
+  ],
+  "connections": {
+    "Tarif Seçildi": {
+      "main": [
+        [
+          {
+            "node": "Buzdolabını Getir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buzdolabını Getir": {
+      "main": [
+        [
+          {
+            "node": "Eksik Malzemeleri Bul",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eksik Malzemeleri Bul": {
+      "main": [
+        [
+          {
+            "node": "Eksik Var mı?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eksik Var mı?": {
+      "main": [
+        [
+          {
+            "node": "Fiyatları Getir",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tamamlandı Döndür",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fiyatları Getir": {
+      "main": [
+        [
+          {
+            "node": "Fiyatları Formatla",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fiyatları Formatla": {
+      "main": [
+        [
+          {
+            "node": "Fiyatları Döndür",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}

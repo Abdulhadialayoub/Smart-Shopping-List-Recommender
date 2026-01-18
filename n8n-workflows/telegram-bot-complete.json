@@ -1,0 +1,280 @@
+{
+  "name": "Smart Shopper Telegram Bot",
+  "nodes": [
+    {
+      "parameters": { "updates": ["message"] },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [-200, 300],
+      "webhookId": "smart-telegram-bot",
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "chatId", "value": "={{$json.message.chat.id.toString()}}", "type": "string" },
+            { "id": "2", "name": "firstName", "value": "={{$json.message.from.first_name || ''}}", "type": "string" },
+            { "id": "3", "name": "command", "value": "={{$json.message.text ? $json.message.text.trim().toLowerCase() : ''}}", "type": "string" }
+          ]
+        }
+      },
+      "id": "extract-data",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "url": "=http://smartshopper-api:8080/api/user/telegram/{{$json.chatId}}",
+        "options": { "response": { "response": { "neverError": true } } }
+      },
+      "id": "check-user",
+      "name": "Check User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [{ "leftValue": "={{$json.telegramChatId}}", "rightValue": "", "operator": { "type": "string", "operation": "exists" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "exists"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "if-user-exists",
+      "name": "User Exists?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://smartshopper-api:8080/api/user/telegram",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"telegramChatId\": \"{{$('Extract Data').item.json.chatId}}\",\n  \"firstName\": \"{{$('Extract Data').item.json.firstName}}\"\n}",
+        "options": {}
+      },
+      "id": "create-user",
+      "name": "Create User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 450]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Extract Data').item.json.chatId}}",
+        "text": "=🎉 Hoş geldin {{$('Extract Data').item.json.firstName}}!\n\nKomutlar:\n/fridge - Buzdolabım\n/expiring - Tarihi yaklaşanlar\n/shopping - Alışveriş listesi\n/help - Yardım",
+        "additionalFields": {}
+      },
+      "id": "welcome-new",
+      "name": "Welcome New",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [800, 450],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [{ "leftValue": "={{$('Extract Data').item.json.command}}", "rightValue": "/start", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true, "outputKey": "start"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [{ "leftValue": "={{$('Extract Data').item.json.command}}", "rightValue": "/fridge", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true, "outputKey": "fridge"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [{ "leftValue": "={{$('Extract Data').item.json.command}}", "rightValue": "/expiring", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true, "outputKey": "expiring"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [{ "leftValue": "={{$('Extract Data').item.json.command}}", "rightValue": "/shopping", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true, "outputKey": "shopping"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [{ "leftValue": "={{$('Extract Data').item.json.command}}", "rightValue": "/help", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true, "outputKey": "help"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "router",
+      "name": "Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Extract Data').item.json.chatId}}",
+        "text": "=👋 Merhaba {{$('Extract Data').item.json.firstName}}!\n\nKomutlar:\n/fridge - Buzdolabım\n/expiring - Tarihi yaklaşanlar\n/shopping - Alışveriş listesi\n/help - Yardım",
+        "additionalFields": {}
+      },
+      "id": "msg-start",
+      "name": "Msg Start",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 50],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "url": "=http://smartshopper-api:8080/api/fridge/telegram/{{$('Extract Data').item.json.chatId}}",
+        "options": {}
+      },
+      "id": "get-fridge",
+      "name": "Get Fridge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 150]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Extract Data').first().json.chatId}}",
+        "text": "=🧊 Buzdolabınız:\n\n{{$input.all().length > 0 ? $input.all().map(item => '• ' + item.json.name + ' (' + item.json.quantity + ' ' + item.json.unit + ')').join('\\n') : 'Boş!'}}",
+        "additionalFields": {}
+      },
+      "id": "msg-fridge",
+      "name": "Msg Fridge",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 150],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "url": "=http://smartshopper-api:8080/api/fridge/telegram/{{$('Extract Data').item.json.chatId}}/expiring?days=5",
+        "options": { "response": { "response": { "neverError": true } } }
+      },
+      "id": "get-expiring",
+      "name": "Get Expiring",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 250]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Extract Data').first().json.chatId}}",
+        "text": "=⚠️ Tarihi Yaklaşanlar:\n\n{{$input.all().length > 0 ? $input.all().map(item => (item.json.daysUntilExpiry <= 1 ? '🔴' : '🟡') + ' ' + item.json.name + ' - ' + item.json.daysUntilExpiry + ' gün').join('\\n') : '✅ Yok!'}}",
+        "additionalFields": {}
+      },
+      "id": "msg-expiring",
+      "name": "Msg Expiring",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 250],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "url": "=http://smartshopper-api:8080/api/shopping/telegram/{{$('Extract Data').item.json.chatId}}",
+        "options": { "response": { "response": { "neverError": true } } }
+      },
+      "id": "get-shopping",
+      "name": "Get Shopping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 350]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Extract Data').first().json.chatId}}",
+        "text": "=🛒 Alışveriş Listeleri:\n\n{{$input.all().length > 0 ? $input.all().slice(0,5).map((item,i) => (i+1) + '. ' + item.json.name).join('\\n') : 'Liste yok!'}}",
+        "additionalFields": {}
+      },
+      "id": "msg-shopping",
+      "name": "Msg Shopping",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 350],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Extract Data').item.json.chatId}}",
+        "text": "❓ Yardım:\n\n/start - Ana menü\n/fridge - Buzdolabı\n/expiring - Tarihi yaklaşanlar\n/shopping - Alışveriş listeleri\n/help - Bu menü",
+        "additionalFields": {}
+      },
+      "id": "msg-help",
+      "name": "Msg Help",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 450],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Extract Data').item.json.chatId}}",
+        "text": "=❌ Bilinmeyen: {{$('Extract Data').item.json.command}}\n\n/help yazın.",
+        "additionalFields": {}
+      },
+      "id": "msg-unknown",
+      "name": "Msg Unknown",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 550],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram account" } }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "Extract Data", "type": "main", "index": 0 }]] },
+    "Extract Data": { "main": [[{ "node": "Check User", "type": "main", "index": 0 }]] },
+    "Check User": { "main": [[{ "node": "User Exists?", "type": "main", "index": 0 }]] },
+    "User Exists?": {
+      "main": [
+        [{ "node": "Router", "type": "main", "index": 0 }],
+        [{ "node": "Create User", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create User": { "main": [[{ "node": "Welcome New", "type": "main", "index": 0 }]] },
+    "Router": {
+      "main": [
+        [{ "node": "Msg Start", "type": "main", "index": 0 }],
+        [{ "node": "Get Fridge", "type": "main", "index": 0 }],
+        [{ "node": "Get Expiring", "type": "main", "index": 0 }],
+        [{ "node": "Get Shopping", "type": "main", "index": 0 }],
+        [{ "node": "Msg Help", "type": "main", "index": 0 }],
+        [{ "node": "Msg Unknown", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Fridge": { "main": [[{ "node": "Msg Fridge", "type": "main", "index": 0 }]] },
+    "Get Expiring": { "main": [[{ "node": "Msg Expiring", "type": "main", "index": 0 }]] },
+    "Get Shopping": { "main": [[{ "node": "Msg Shopping", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

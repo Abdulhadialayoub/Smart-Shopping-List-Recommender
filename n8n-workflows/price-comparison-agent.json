@@ -1,0 +1,267 @@
+{
+  "name": "Fiyat Karsilastirma Ajani",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "name": "Her 6 Saatte Bir",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot/getUpdates",
+        "options": {}
+      },
+      "name": "Telegram Updates Al",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Telegram updates'ten chat ID'leri �ikar ve demo user'a map et\nconst updates = items[0].json.result;\nlet chatId = 'DEMO_CHAT_ID';\nlet userId = 'demo-user-123';\n\nif (updates && updates.length > 0) {\n  // En son mesajdan chat ID al\n  const lastUpdate = updates[updates.length - 1];\n  if (lastUpdate.message && lastUpdate.message.chat) {\n    chatId = lastUpdate.message.chat.id;\n    userId = 'demo-user-123'; // Simdilik demo user kullan\n  }\n}\n\nreturn [{\n  json: {\n    userId: userId,\n    chatId: chatId,\n    telegramChatId: chatId\n  }\n}];"
+      },
+      "name": "Chat ID Hazirla",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://nginx-proxy/api/fridge/{{$json.userId}}",
+        "options": {}
+      },
+      "name": "Buzdolabi Durumu Al",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Kullanicinin buzdolabina g�re dinamik �r�n listesi olustur\nconst fridgeItems = items[0].json;\nconst today = new Date();\n\n// Son kullanma tarihi yaklasan �r�nler (7 g�n i�inde)\nconst expiringItems = fridgeItems.filter(item => {\n  const expiryDate = new Date(item.expiryDate);\n  const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));\n  return daysUntilExpiry <= 7 && daysUntilExpiry >= 0;\n}).map(item => item.name);\n\n// Mevcut �r�n kategorileri\nconst categories = [...new Set(fridgeItems.map(item => item.category))];\n\n// Eksik temel �r�nler\nconst basicItems = ['Ekmek', 'S�t', 'Yumurta', 'Domates', 'Sogan', 'Patates', 'Tavuk', 'Pirin�', 'Makarna', 'Zeytinyagi'];\nconst availableItems = fridgeItems.map(item => item.name.toLowerCase());\nconst missingBasicItems = basicItems.filter(basic => \n  !availableItems.some(available => \n    available.includes(basic.toLowerCase()) || basic.toLowerCase().includes(available)\n  )\n);\n\n// Kategori bazinda eksik �r�nler\nconst categoryBasedSuggestions = [];\nif (!categories.includes('Sebze')) {\n  categoryBasedSuggestions.push('Domates', 'Salatalik', 'Marul');\n}\nif (!categories.includes('Meyve')) {\n  categoryBasedSuggestions.push('Elma', 'Muz', 'Portakal');\n}\nif (!categories.includes('S�t �r�nleri')) {\n  categoryBasedSuggestions.push('S�t', 'Peynir', 'Yogurt');\n}\nif (!categories.includes('Et/Balik')) {\n  categoryBasedSuggestions.push('Tavuk', 'Balik');\n}\n\n// Dinamik �r�n listesi olustur\nconst dynamicProducts = [\n  ...expiringItems.slice(0, 3), // Yakinda bitecek �r�nler\n  ...missingBasicItems.slice(0, 5), // Eksik temel �r�nler\n  ...categoryBasedSuggestions.slice(0, 4) // Kategori bazinda �neriler\n].filter((item, index, arr) => arr.indexOf(item) === index); // Duplicates'i kaldir\n\n// En az 5, en fazla 12 �r�n\nconst finalProducts = dynamicProducts.length < 5 \n  ? [...dynamicProducts, ...basicItems.slice(0, 5 - dynamicProducts.length)]\n  : dynamicProducts.slice(0, 12);\n\nreturn [{\n  json: {\n    userId: 'demo-user-123',\n    dynamicProducts: finalProducts,\n    analysis: {\n      totalFridgeItems: fridgeItems.length,\n      expiringItemsCount: expiringItems.length,\n      missingBasicItemsCount: missingBasicItems.length,\n      availableCategories: categories,\n      suggestedProductsCount: finalProducts.length\n    },\n    expiringItems,\n    missingBasicItems,\n    categoryBasedSuggestions\n  }\n}];"
+      },
+      "name": "Dinamik �r�n Listesi Olustur",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://nginx-proxy/api/shopping/n8n/bulk-price-comparison/{{$('Chat ID Hazirla').item.json.userId}}?products={{$json.dynamicProducts.join(',')}}",
+        "options": {}
+      },
+      "name": "Toplu Fiyat Karsilastirmasi",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Fiyat analizi ve uyarilar\nconst results = items[0].json.results;\nconst summary = items[0].json.summary;\n\n// B�y�k fiyat degisikliklerini tespit et\nconst priceAlerts = [];\nconst significantChanges = [];\n\nfor (const result of results) {\n  const priceRange = result.priceRange;\n  const averagePrice = result.averagePrice;\n  \n  // %20'den fazla fiyat farki varsa uyari\n  if (priceRange / averagePrice > 0.2) {\n    priceAlerts.push({\n      product: result.product,\n      cheapestStore: result.cheapestStore,\n      cheapestPrice: result.cheapestPrice,\n      priceRange: priceRange,\n      savingsPercentage: Math.round((priceRange / averagePrice) * 100)\n    });\n  }\n}\n\n// En �ok tasarruf saglayacak �r�nleri belirle\nconst topSavings = results\n  .sort((a, b) => b.priceRange - a.priceRange)\n  .slice(0, 3);\n\nreturn [{\n  json: {\n    timestamp: new Date().toISOString(),\n    priceAlerts,\n    topSavings,\n    summary,\n    totalProducts: results.length,\n    averageSavingsOpportunity: summary.totalSavings / results.length\n  }\n}];"
+      },
+      "name": "Fiyat Analizi",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.priceAlerts.length}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "name": "Uyari Var mi?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "method": "POST",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ { \"chat_id\": $('Chat ID Hazirla').item.json.chatId, \"text\": \"?? Fiyat Uyarisi!\\n\\n?? Buzdolabi Analizi:\\n� Toplam �r�n: \" + $('Dinamik �r�n Listesi Olustur').item.json.analysis.totalFridgeItems + \"\\n� Yakinda bitecek: \" + $('Dinamik �r�n Listesi Olustur').item.json.analysis.expiringItemsCount + \" �r�n\\n� Eksik temel �r�n: \" + $('Dinamik �r�n Listesi Olustur').item.json.analysis.missingBasicItemsCount + \"\\n\\n?? Fiyat Firsatlari:\\n\" + $json.priceAlerts.length + \" �r�nde �nemli fiyat farklari tespit edildi\", \"parse_mode\": \"Markdown\" } }}"
+      },
+      "name": "Telegram Bildirimi",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://nginx-proxy/api/webhook/price-alert",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ { \"alerts\": $json.priceAlerts, \"summary\": $json.summary, \"timestamp\": $json.timestamp } }}"
+      },
+      "name": "Veritabanina Kaydet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Her 6 Saatte Bir": {
+      "main": [
+        [
+          {
+            "node": "Telegram Updates Al",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Updates Al": {
+      "main": [
+        [
+          {
+            "node": "Chat ID Hazirla",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat ID Hazirla": {
+      "main": [
+        [
+          {
+            "node": "Buzdolabi Durumu Al",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buzdolabi Durumu Al": {
+      "main": [
+        [
+          {
+            "node": "Dinamik �r�n Listesi Olustur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dinamik �r�n Listesi Olustur": {
+      "main": [
+        [
+          {
+            "node": "Toplu Fiyat Karsilastirmasi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Toplu Fiyat Karsilastirmasi": {
+      "main": [
+        [
+          {
+            "node": "Fiyat Analizi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fiyat Analizi": {
+      "main": [
+        [
+          {
+            "node": "Uyari Var mi?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uyari Var mi?": {
+      "main": [
+        [
+          {
+            "node": "Telegram Bildirimi",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Veritabanina Kaydet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "id": "price-comparison-agent"
+}

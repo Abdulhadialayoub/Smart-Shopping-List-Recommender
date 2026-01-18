@@ -1,0 +1,6 @@
+@SmartShopper.Api_HostAddress = http://localhost:5193
+
+GET {{SmartShopper.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
